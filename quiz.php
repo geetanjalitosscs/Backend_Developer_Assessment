@@ -7,6 +7,36 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+/**
+ * Helper to fetch question rows from a prepared statement without relying on mysqlnd get_result().
+ *
+ * @param mysqli_stmt $stmt
+ * @return array<int, array<string, mixed>>
+ */
+function fetchQuestionsFromStatement(mysqli_stmt $stmt): array
+{
+    $questions = [];
+    $stmt->store_result();
+
+    if ($stmt->num_rows === 0) {
+        return $questions;
+    }
+
+    $stmt->bind_result($id, $question, $optionA, $optionB, $optionC, $optionD);
+    while ($stmt->fetch()) {
+        $questions[] = [
+            'id'        => $id,
+            'question'  => $question,
+            'option_a'  => $optionA,
+            'option_b'  => $optionB,
+            'option_c'  => $optionC,
+            'option_d'  => $optionD,
+        ];
+    }
+
+    return $questions;
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Read role and level from form (required)
     $role  = trim($_POST['role'] ?? '');
@@ -59,12 +89,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $checkStmt = $conn->prepare("SELECT id FROM users WHERE email = ? OR mobile = ?");
     $checkStmt->bind_param("ss", $email, $mobile);
     $checkStmt->execute();
-    $existingUser = $checkStmt->get_result();
-    
-    if ($existingUser->num_rows > 0) {
-        $existingUserData = $existingUser->fetch_assoc();
-        $existingUserId = $existingUserData['id'];
-        
+    $checkStmt->store_result();
+
+    $existingUserId = null;
+    if ($checkStmt->num_rows > 0) {
+        $checkStmt->bind_result($existingUserId);
+        $checkStmt->fetch();
+    }
+    $checkStmt->free_result();
+    $checkStmt->close();
+
+    if ($existingUserId !== null) {
         // Check if user has already submitted responses
         $responseCheck = $conn->query("SELECT COUNT(*) as count FROM responses WHERE user_id = $existingUserId");
         $responseCount = $responseCheck->fetch_assoc()['count'];
@@ -119,20 +154,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $stmtQ->bind_param("ss", $levelA, $levelB);
     }
     $stmtQ->execute();
-    $questions = $stmtQ->get_result();
+    $question_data = fetchQuestionsFromStatement($stmtQ);
 
     // Fallback: if none found and table has role, ignore role filter and just match level
-    if ($questions->num_rows === 0 && $hasRoleCol) {
+    if (count($question_data) === 0 && $hasRoleCol) {
         $stmtQ->close();
         $sql = $baseSelect . " WHERE LOWER(level) IN (?, ?) ORDER BY RAND() LIMIT 50";
         $stmtQ = $conn->prepare($sql);
         $stmtQ->bind_param("ss", $levelA, $levelB);
         $stmtQ->execute();
-        $questions = $stmtQ->get_result();
-    }
-    $question_data = [];
-    while ($row = $questions->fetch_assoc()) {
-        $question_data[] = $row;
+        $question_data = fetchQuestionsFromStatement($stmtQ);
     }
     if (count($question_data) === 0) {
         die("No questions found for {$role} ({$level}). Please contact the administrator.");
@@ -154,6 +185,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             margin: 0;
             padding: 0;
             min-height: 100vh;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-user-drag: none;
         }
         header {
             background: linear-gradient(135deg, #004080 0%, #0056b3 100%);
@@ -325,6 +361,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     </div>
 
     <script>
+        // Basic deterrent: disable context menu and common developer shortcuts
+        document.addEventListener('contextmenu', event => event.preventDefault());
+        document.onkeydown = function(e) {
+            if (e.keyCode === 123) return false;
+            if (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) return false;
+            if (e.ctrlKey && (e.keyCode === 85 || e.keyCode === 83)) return false;
+        };
+    </script>
+    <script>
+        // Disable context menu and common developer shortcuts
+        const blockMessage = 'This action is disabled on this page.';
+        document.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            alert(blockMessage);
+        });
+        document.addEventListener('keydown', (event) => {
+            const key = event.key.toLowerCase();
+            if (
+                event.key === 'F12' ||
+                (event.ctrlKey && event.shiftKey && ['i', 'j', 'c', 'k', 'p'].includes(key)) ||
+                (event.ctrlKey && ['u', 's', 'p'].includes(key)) ||
+                (event.ctrlKey && event.altKey && key === 'i')
+            ) {
+                event.preventDefault();
+                event.stopPropagation();
+                alert(blockMessage);
+                return false;
+            }
+            return true;
+        });
+
         // Guard: prevent refresh/reload/back while on quiz page
         let guardEnabled = true;
         window.onbeforeunload = function(e) {

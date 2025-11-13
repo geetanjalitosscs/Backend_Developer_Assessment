@@ -16,6 +16,11 @@
       margin: 0;
       padding: 0;
       min-height: 100vh;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      -webkit-user-drag: none;
     }
 
     header {
@@ -217,6 +222,14 @@
   </div>
 
   <script>
+    // Basic deterrent: disable context menu and common shortcuts
+    document.addEventListener('contextmenu', event => event.preventDefault());
+    document.onkeydown = function(e) {
+      if (e.keyCode === 123) return false;
+      if (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) return false;
+      if (e.ctrlKey && (e.keyCode === 85 || e.keyCode === 83)) return false;
+    };
+
     // Client-side duplicate attempt check on Start Quiz button click (AJAX before submit)
     document.getElementById('startBtn').addEventListener('click', async function(e) {
       e.preventDefault();
